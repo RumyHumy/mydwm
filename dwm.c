@@ -40,6 +40,7 @@
 #include <X11/extensions/Xinerama.h>
 #endif /* XINERAMA */
 #include <X11/Xft/Xft.h>
+#include <pthread.h>
 
 #include "drw.h"
 #include "util.h"
@@ -266,6 +267,9 @@ static Display *dpy;
 static Drw *drw;
 static Monitor *mons, *selmon;
 static Window root, wmcheckwin;
+char bar_weather[256] = "Pending...";
+char bar_battery[256] = "Pending...";
+char bar_datetime[256] = "Pending...";
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
@@ -2139,6 +2143,69 @@ zoom(const Arg *arg)
 	pop(c);
 }
 
+/* status bar */
+void*
+barupdmain(void* args) {
+	while (1) {
+		snprintf(stext, sizeof(stext), "%s | %s | %s", bar_weather, bar_battery, bar_datetime);
+		drawbar(selmon);
+		usleep(1000*1000);
+	}
+	return NULL;
+}
+
+void*
+bardatetime(void* arg) {
+	while (1) {
+		time_t t = time(NULL);
+		struct tm tm = *localtime(&t);
+		strftime(bar_datetime, sizeof(bar_datetime), "%Y-%m-%d %H:%M:%S", &tm);
+		sleep(1);
+	}
+	return NULL;
+}
+
+void* barupdbattery(void* arg) {
+	while (1) {
+		FILE* fp = popen("acpi -b | grep -oP '[0-9]+(?=%)' | awk '{print \"POWER: \"$1\"%\"}' | head -1", "r");
+		if (fp == NULL) {
+			die("barupdbattery: popen error");
+		}
+		if (fgets(bar_battery, sizeof(bar_battery), fp) == NULL) {
+			strcpy(bar_battery, "POWER: INFINITE");
+		} else {
+			bar_battery[strcspn(bar_battery, "\n")] = 0;
+		}
+		pclose(fp);
+		sleep(10);
+	}
+	return NULL;
+}
+
+void*
+barupdweather(void* arg) {
+	while (1) {
+		FILE* fp = popen("curl 'wttr.in/saint-petersburg?format=%t(%h),%C(%p),%w'", "r"); \
+		if (fp == NULL) {
+			die("barupdweather: popen error");
+		}
+		fgets(bar_weather, sizeof(bar_weather), fp);
+		bar_weather[strcspn(bar_weather, "\n")] = 0;
+		pclose(fp);
+		sleep(30);
+	}
+	return NULL;
+}
+
+void
+barinit() {
+	pthread_t main_thread, weather_thread, battery_thread, datetime_thread;
+	pthread_create(&main_thread, NULL, barupdmain, NULL);
+	pthread_create(&weather_thread, NULL, barupdweather, NULL);
+	pthread_create(&battery_thread, NULL, barupdbattery, NULL);
+	pthread_create(&datetime_thread, NULL, bardatetime, NULL);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -2152,6 +2219,7 @@ main(int argc, char *argv[])
 		die("dwm: cannot open display");
 	checkotherwm();
 	setup();
+	barinit();
 #ifdef __OpenBSD__
 	if (pledge("stdio rpath proc exec", NULL) == -1)
 		die("pledge");
