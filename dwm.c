@@ -2155,7 +2155,7 @@ barupdmain(void* args) {
 }
 
 void*
-bardatetime(void* arg) {
+barupddatetime(void* arg) {
 	while (1) {
 		time_t t = time(NULL);
 		struct tm tm = *localtime(&t);
@@ -2203,7 +2203,7 @@ barinit() {
 	pthread_create(&main_thread, NULL, barupdmain, NULL);
 	pthread_create(&weather_thread, NULL, barupdweather, NULL);
 	pthread_create(&battery_thread, NULL, barupdbattery, NULL);
-	pthread_create(&datetime_thread, NULL, bardatetime, NULL);
+	pthread_create(&datetime_thread, NULL, barupddatetime, NULL);
 }
 
 int
