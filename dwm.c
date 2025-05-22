@@ -40,7 +40,7 @@
 #include <X11/extensions/Xinerama.h>
 #endif /* XINERAMA */
 #include <X11/Xft/Xft.h>
-#include <time.h>
+#include <pthread.h>
 
 #include "drw.h"
 #include "util.h"
@@ -267,7 +267,7 @@ static Display *dpy;
 static Drw *drw;
 static Monitor *mons, *selmon;
 static Window root, wmcheckwin;
-char bar_weather[64] = "Pending...";
+char bar_weather[128] = "Pending...";
 char bar_battery[64] = "Pending...";
 char bar_datetime[32] = "Pending...";
 
@@ -1383,38 +1383,14 @@ restack(Monitor *m)
 }
 
 void
-barupddatetime() {
-	time_t t = time(NULL);
-	struct tm tm = *localtime(&t);
-	strftime(bar_datetime, sizeof(bar_datetime), "%Y-%m-%d %H:%M:%S", &tm);
-}
-
-void
-barupdate() {
-	barupddatetime();
-	snprintf(stext, sizeof(stext), "%s", bar_datetime);
-	drawbar(selmon);
-}
-
-void
 run(void)
 {
 	XEvent ev;
-	clock_t clock_start = clock();
-	double time_curr = 0.0;
-	double time_last = 0.0;
-	barupdate();
 	/* main event loop */
 	XSync(dpy, False);
-	while (running && !XNextEvent(dpy, &ev)) {
-		time_curr = ((double)(clock()-clock_start))/CLOCKS_PER_SEC;
-		if (time_curr > time_last+1.0) {
-			barupdate();
-			time_last = time_curr;
-		}
+	while (running && !XNextEvent(dpy, &ev))
 		if (handler[ev.type])
 			handler[ev.type](&ev); /* call handler */
-	}
 }
 
 void
@@ -2167,6 +2143,61 @@ zoom(const Arg *arg)
 	pop(c);
 }
 
+/* status bar */
+void
+barupddatetime() {
+	time_t t = time(NULL);
+	struct tm tm = *localtime(&t);
+	strftime(bar_datetime, sizeof(bar_datetime), "%Y-%m-%d %H:%M:%S", &tm);
+}
+
+void
+barupdbattery() {
+	FILE* fp = popen("acpi -b | grep -oP '[0-9]+(?=%)' | awk '{print \"POWER: \"$1\"%\"}' | head -1", "r");
+	if (fp == NULL) {
+		die("barupdbattery: popen error");
+	}
+	if (fgets(bar_battery, sizeof(bar_battery), fp) == NULL) {
+		strcpy(bar_battery, "POWER: INFINITE");
+	} else {
+		bar_battery[strcspn(bar_battery, "\n")] = 0;
+	}
+	pclose(fp);
+}
+
+void
+barupdweather() {
+	FILE* fp = popen("curl 'wttr.in/saint-petersburg?format=%t(%h),%C(%p),%w'", "r"); \
+	if (fp == NULL) {
+		die("barupdweather: popen error");
+	}
+	fgets(bar_weather, sizeof(bar_weather), fp);
+	bar_weather[strcspn(bar_weather, "\n")] = 0;
+	pclose(fp);
+}
+
+void*
+barupdmain(void* args) {
+	int counter_max = 5*60;
+	int counter = 0;
+	while (1) {
+		barupddatetime();
+		if (counter%5 == 0) barupdbattery();
+		if (counter%(5*60) == 0) barupdweather();
+		snprintf(stext, sizeof(stext), "%s | %s | %s", bar_weather, bar_battery, bar_datetime);
+		drawbar(selmon);
+		sleep(1);
+		counter = (counter+1)%counter_max;
+	}
+	return NULL;
+}
+
+void
+barinit() {
+	pthread_t main_thread;
+	pthread_create(&main_thread, NULL, barupdmain, NULL);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -2180,6 +2211,7 @@ main(int argc, char *argv[])
 		die("dwm: cannot open display");
 	checkotherwm();
 	setup();
+	barinit();
 #ifdef __OpenBSD__
 	if (pledge("stdio rpath proc exec", NULL) == -1)
 		die("pledge");
