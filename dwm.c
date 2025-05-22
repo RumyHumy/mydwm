@@ -40,6 +40,7 @@
 #include <X11/extensions/Xinerama.h>
 #endif /* XINERAMA */
 #include <X11/Xft/Xft.h>
+#include <time.h>
 
 #include "drw.h"
 #include "util.h"
@@ -266,6 +267,9 @@ static Display *dpy;
 static Drw *drw;
 static Monitor *mons, *selmon;
 static Window root, wmcheckwin;
+char bar_weather[64] = "Pending...";
+char bar_battery[64] = "Pending...";
+char bar_datetime[32] = "Pending...";
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
@@ -1379,14 +1383,38 @@ restack(Monitor *m)
 }
 
 void
+barupddatetime() {
+	time_t t = time(NULL);
+	struct tm tm = *localtime(&t);
+	strftime(bar_datetime, sizeof(bar_datetime), "%Y-%m-%d %H:%M:%S", &tm);
+}
+
+void
+barupdate() {
+	barupddatetime();
+	snprintf(stext, sizeof(stext), "%s", bar_datetime);
+	drawbar(selmon);
+}
+
+void
 run(void)
 {
 	XEvent ev;
+	clock_t clock_start = clock();
+	double time_curr = 0.0;
+	double time_last = 0.0;
+	barupdate();
 	/* main event loop */
 	XSync(dpy, False);
-	while (running && !XNextEvent(dpy, &ev))
+	while (running && !XNextEvent(dpy, &ev)) {
+		time_curr = ((double)(clock()-clock_start))/CLOCKS_PER_SEC;
+		if (time_curr > time_last+1.0) {
+			barupdate();
+			time_last = time_curr;
+		}
 		if (handler[ev.type])
 			handler[ev.type](&ev); /* call handler */
+	}
 }
 
 void
